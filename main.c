@@ -15,10 +15,21 @@
 
 void run_worker(int read_fd, int write_fd, int id);
 
-int main(){
-    // User can select the process mode of the uploaded image, default mode is 1
-    int mode = 1;
+int main(int argc, char *argv[]){
+    // Parameter check: program name + input file + 3 mode numbers
+    if(argc < 5){
+        fprintf(stderr, "Usage: %s <input.ppm> <m0> <m1> <m2>\n", argv[0]);
+        exit(1);
+    }
 
+    char *input_filename = argv[1];
+
+    // User can select the process mode of the uploaded image
+    int selected_modes[3]; 
+    for (int i = 0; i < 3; i++) {
+        selected_modes[i] = atoi(argv[i + 2]);
+    }
+    
     // This is the parent to child pipe, which carrying out the task distribution
     int parent_to_child[3][2]; 
 
@@ -54,33 +65,52 @@ int main(){
         // Close the "write" of the child_to_parent pipe, the parent process will only read data from this pipe
         close(child_to_parent[i][1]);
     }
-
-    for (int j = 0; j < 10; j++){
+    
+    //prepare output files 
+    FILE *out_files[3];
+    char out_name[32];
+    for (int i = 0; i < 3; i++){
+        sprintf(out_name,"output_mode%d.ppm", selected_modes[i]);
+        out_files[i] = fopen(out_name, "wb");
+        if (!out_files[i]){perror("fopen"); exit(1);}
+        // TODO：write_ppm_header（out_files[i]，w，h）；
+        fprintf(out_files[i], "P6\n%d %d\n255\n", 100, 10); //this is a mock header, need to modify later
+    }
+    
+    //distribution and recycling cycle(still using mock data, need to modify later
+    for(int j = 0; j < 10; j++){
         ImagePacket pkt;
         pkt.chunk_id = j;
         pkt.data_size = 1500;
+        
+        //load_pixel_data(&pkt);
 
-        int target_worker;
-
-        if (mode == 1){
-            pkt.worker_id = 0;
-            target_worker = j % 3;
-        }else{
-            target_worker = j % 3;
-            pkt.worker_id = target_worker;
+        for(int w = 0; w < 3; w++){
+            pkt.worker_id = selected_modes[w];
+            if (write(parent_to_child[w][1], &pkt, sizeof(ImagePacket)) == -1) {
+                perror("write");
+            }
         }
-
-        write(parent_to_child[target_worker][1], &pkt, sizeof(ImagePacket));
-        ImagePacket result;
-        if(read(parent_to_child[target_worker][0], &result, sizeof(ImagePacket)) > 0){
-            printf("Parent received chunk %d (Processed by Algorithm %d) from Worker %d\n", result.chunk_id, result.worker_id, target_worker);
+        for (int w = 0; w < 3; w++){
+            ImagePacket result;
+            if(read(child_to_parent[w][0], &result, sizeof(ImagePacket)) > 0){
+                fwrite(result.payload, 1, result.data_size, out_files[w]);
+            }
         }
+        printf("Progress: Chunk %d processed by all 3 filters.\n", j);
     }
+    
+
+
+
 
     for (int i = 0 ; i < 3; i++){
+        fclose(out_files[i]);
         close(parent_to_child[i][1]);
         close(child_to_parent[i][0]);
         waitpid(pids[i], NULL, 0);
     }
+
+    printf("Processing complete. 3 images generated.\n");
     return 0;
 }
