@@ -9,6 +9,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include "protocol.h"
@@ -84,6 +85,7 @@ int main(int argc, char *argv[]){
         pkt.data_size = 1500;
         
         //load_pixel_data(&pkt);
+        for(int k=0; k<1500; k++) pkt.payload[k] = (unsigned char)j;
 
         for(int w = 0; w < 3; w++){
             pkt.worker_id = selected_modes[w];
@@ -94,6 +96,8 @@ int main(int argc, char *argv[]){
         for (int w = 0; w < 3; w++){
             ImagePacket result;
             if(read(child_to_parent[w][0], &result, sizeof(ImagePacket)) > 0){
+                printf("Test: Worker %d returned chunk %d, first byte is: %d (Expected: %d)\n", 
+                        w, result.chunk_id, result.payload[0], j + 1);
                 fwrite(result.payload, 1, result.data_size, out_files[w]);
             }
         }
@@ -105,12 +109,25 @@ int main(int argc, char *argv[]){
 
 
     for (int i = 0 ; i < 3; i++){
-        fclose(out_files[i]);
         close(parent_to_child[i][1]);
-        close(child_to_parent[i][0]);
+    }
+
+    for (int i = 0; i < 3; i++){
         waitpid(pids[i], NULL, 0);
+        close(child_to_parent[i][0]);   
+        fclose(out_files[i]);
     }
 
     printf("Processing complete. 3 images generated.\n");
     return 0;
+}
+
+void run_worker(int read_fd, int write_fd, int id){
+    ImagePacket pkt;
+    while (read(read_fd, &pkt, sizeof(ImagePacket)) > 0){
+        for (uint32_t i = 0; i < pkt.data_size; i++){
+            pkt.payload[i] = (unsigned char)(pkt.payload[i] + 1);
+        }
+        write(write_fd, &pkt, sizeof(ImagePacket));
+    }
 }
